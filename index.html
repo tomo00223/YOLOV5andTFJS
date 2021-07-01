@@ -1,0 +1,135 @@
+<html lang="ja">
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    <title>detect</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs/dist/tf.min.js"> </script>
+
+</head>
+
+<body>
+    <p id="message"><a>select file</a></p><br>
+    <input id="picker" type="file" style="visibility: visible;"><br>
+    <img id="loader" src="" width="1008" height="756" style="display: none"><br>
+    <canvas width="1008" height="756" id="canvas" style="visibility: visible;"></canvas>
+</body>
+
+
+<script>
+      var MODEL_HEIGHT = 1;
+      var MODEL_WIDTH = 1;
+
+      const ctx = canvas.getContext("2d");
+      const chara = new Image();
+
+      picker.onchange = function() {
+          var file = picker.files[0];
+          if (!file) {
+              message.innerText = 'no file';
+              return;
+          }
+          if (!file.type.match(/image/)) {
+              message.innerText = 'not image file';
+              return;
+          }
+
+          function readImageDataLater() {
+              var reader = new FileReader();
+              reader.onload = function() {
+                  loader.src = reader.result;
+
+                  chara.src = reader.result;  // image URL
+                  chara.onload = () => {
+                    ctx.drawImage(chara, 0, 0, 1008, 756);
+                  };
+              }
+              reader.readAsDataURL(file);
+          }
+          setTimeout(readImageDataLater, 0);
+
+          message.innerText = 'Reading model';
+
+          const model = tf.loadGraphModel('model.json').then(model => {
+              message.innerText = 'Finish reading model';
+              MODEL_HEIGHT  = model.inputs[0].shape[2];
+              MODEL_WIDTH  = model.inputs[0].shape[3];
+
+              let imageTensor = tf.browser.fromPixels(loader, 3);
+              imageTensor = imageTensor.resizeBilinear([MODEL_HEIGHT, MODEL_WIDTH]).toFloat();
+
+
+              let offset = tf.scalar(255);
+              imageTensor = imageTensor.div(offset).expandDims(0);
+
+              //NHWC⇒NCHW
+              imageTensor = imageTensor.transpose([0, 3, 1, 2]);
+
+              var output = model.executeAsync(imageTensor).then(output=> {
+                    const o0 = output[0].arraySync();
+
+                    const OBJECT_TH = 0.5;
+                    const IOU_TH = 0.5;
+                    const bairitu_w = 1008/640;
+                    const bairitu_h = 756/640;
+
+                    let a=0;
+                    var list = new Array();
+
+                    for (let i = 0; i < o0[0].length; i++) {
+                        if((o0[0][i][4]*o0[0][i][5])>0.5){
+                            a = a+1;
+                            const dx = o0[0][i][2]*bairitu_w/2;
+                            const dy = o0[0][i][2]*bairitu_h/2;
+
+                            var ary = new Array();
+                            ary.push(o0[0][i][0]*bairitu_w - dx);
+                            ary.push(o0[0][i][1]*bairitu_h - dy);
+                            ary.push(o0[0][i][2]*bairitu_w);
+                            ary.push(o0[0][i][3]*bairitu_h);
+                            ary.push(o0[0][i][4]*o0[0][i][5]);
+
+                            list.push(ary);
+                        }
+                    }
+
+                    list.sort(function(a,b){return(a[4] - b[4]);});
+
+                    ctx.lineWidth = 2;
+                    ctx.strokeStyle = "rgb(255, 255, 255)";
+
+                    for (let i = 0; i < list.length; i++) {
+                        let aa = 0;
+                        for(let j = i+1; j< list.length; j++) {
+                            var iou = bbox_iou(list[i], list[j]);
+                            if(iou > 0.5) {
+                                aa = 1;
+                                break;
+                            }
+                        }
+                        ctx.fillStyle;
+                        if(aa==0) {
+                            ctx.strokeRect(list[i][0], list[i][1], list[i][2], list[i][3]);
+                        }
+                    }
+              })
+          })
+      }
+
+
+      //Calculate IOU
+      function bbox_iou(box1, box2){
+          xs1 = Math.max(box1[0], box2[0]);
+          ys1 = Math.max(box1[1], box2[1]);
+          xs2 = Math.min(box1[0] + box1[2], box2[0] + box2[2]);
+          ys2 = Math.min(box1[1] + box1[3], box2[1] + box2[3]);
+
+          intersections  = Math.max(ys2 - ys1, 0) * Math.max(xs2 - xs1, 0);
+
+          unions = (box1[2] * box1[3]) + (box2[2] * box2[3]) - intersections;
+
+          ious = intersections / unions;
+
+          return ious;
+      }
+    </script>
+
+</html>
